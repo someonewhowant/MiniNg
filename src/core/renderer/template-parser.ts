@@ -4,7 +4,6 @@ export interface ViewBinding {
 
 const INTERPOLATION_RE = /\{\{\s*(\w+)\s*\}\}/g;
 const EVENT_BINDING_RE = /^\((\w+)\)$/;
-const METHOD_CALL_RE = /^(\w+)\(\)$/;
 const PROP_BINDING_RE = /^\[(\w+)\]$/;
 
 export class TemplateParser {
@@ -68,10 +67,19 @@ export class TemplateParser {
         const eventMatch = attr.name.match(EVENT_BINDING_RE);
         if (eventMatch) {
           const eventName = eventMatch[1];
-          const methodMatch = attr.value.match(METHOD_CALL_RE);
+          // We changed the regex conceptually, let's use a non-global regex inline
+          // to match methodName(args)
+          const methodMatch = attr.value.match(/^(\w+)\((.*?)\)$/);
           if (methodMatch) {
             const methodName = methodMatch[1];
-            el.addEventListener(eventName, () => instance[methodName]());
+            const argsStr = methodMatch[2].trim();
+            el.addEventListener(eventName, (event) => {
+              if (argsStr === '$event') {
+                instance[methodName](event);
+              } else {
+                instance[methodName]();
+              }
+            });
           }
           el.removeAttribute(attr.name);
         }

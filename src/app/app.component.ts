@@ -12,6 +12,11 @@ import { CounterService } from './services/counter.service';
         <p>Count from DI Service: {{ count }}</p>
       </div>
 
+      <div style="margin: 1rem 0;">
+        <input (input)="onInput($event)" placeholder="Type something..." />
+        <p>You typed: {{ typedText }}</p>
+      </div>
+
       <button (click)="increment()" [disabled]="isLocked">+1</button>
       <button (click)="toggleDetails()">Toggle Details</button>
       <button (click)="toggleLock()">Toggle Lock</button>
@@ -23,6 +28,7 @@ export class AppComponent implements OnInit {
   count = 0;
   showDetails = true;
   isLocked = false;
+  typedText = '';
 
   constructor(private counterService: CounterService) {
     this.count = this.counterService.getValue();
@@ -30,6 +36,11 @@ export class AppComponent implements OnInit {
 
   ngOnInit() {
     this.title = 'Loaded via OnInit!';
+  }
+
+  onInput(event: Event) {
+    const input = event.target as HTMLInputElement;
+    this.typedText = input.value;
   }
 
   increment() {
