@@ -1,3 +1,5 @@
 import 'reflect-metadata';
+import { bootstrap } from '@core';
+import { AppComponent } from './app.component';
 
-console.log('MiniNG framework loaded');
+bootstrap(AppComponent);
