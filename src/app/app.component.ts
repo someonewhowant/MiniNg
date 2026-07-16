@@ -1,25 +1,25 @@
 import { Component } from '@core';
+import { CounterService } from './services/counter.service';
 
 @Component({
   selector: 'app-root',
   template: `
     <div style="font-family: sans-serif; padding: 2rem;">
       <h1>{{ title }}</h1>
-      <p>Count: {{ count }}</p>
+      <p>Count from DI Service: {{ count }}</p>
       <button (click)="increment()">+1</button>
-      <button (click)="reset()">Reset</button>
     </div>
   `
 })
 export class AppComponent {
-  title = 'MiniNG Framework - Reactivity';
+  title = 'MiniNG Framework - DI';
   count = 0;
 
-  increment() {
-    this.count++;
+  constructor(private counterService: CounterService) {
+    this.count = this.counterService.getValue();
   }
 
-  reset() {
-    this.count = 0;
+  increment() {
+    this.count = this.counterService.increment();
   }
 }

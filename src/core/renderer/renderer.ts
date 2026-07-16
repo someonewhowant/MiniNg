@@ -1,6 +1,7 @@
 import { getComponentConfig } from '../decorators/component';
 import { TemplateParser, InterpolationBinding } from './template-parser';
 import { createReactiveProxy } from './change-detection';
+import { container } from '../di/container';
 
 export interface ComponentRef {
   instance: any;
@@ -15,7 +16,7 @@ export class Renderer {
       throw new Error(`Class ${ComponentClass.name} is not a valid component.`);
     }
 
-    const rawInstance = new ComponentClass();
+    const rawInstance = container.resolve(ComponentClass);
 
     let bindings: InterpolationBinding[] = [];
 
