@@ -1,96 +1,133 @@
-export interface InterpolationBinding {
-  node: Node;
-  expression: string;
-  originalText: string;
+export interface ViewBinding {
+  update(instance: any): void;
 }
 
 const INTERPOLATION_RE = /\{\{\s*(\w+)\s*\}\}/g;
 const EVENT_BINDING_RE = /^\((\w+)\)$/;
 const METHOD_CALL_RE = /^(\w+)\(\)$/;
+const PROP_BINDING_RE = /^\[(\w+)\]$/;
 
 export class TemplateParser {
-  static parse(template: string, instance: any): { fragment: DocumentFragment; bindings: InterpolationBinding[] } {
+  static parse(template: string, instance: any): { fragment: DocumentFragment; bindings: ViewBinding[] } {
     const templateElement = document.createElement('template');
     templateElement.innerHTML = template.trim();
     const fragment = templateElement.content;
+    const bindings: ViewBinding[] = [];
 
-    const bindings: InterpolationBinding[] = [];
+    TemplateParser.parseNode(fragment, instance, bindings);
+    
+    // Initial evaluation for static bindings
+    TemplateParser.updateBindings(bindings, instance);
+    
+    return { fragment, bindings };
+  }
 
-    // 1. Parse text nodes for interpolation
-    const walker = document.createTreeWalker(fragment, NodeFilter.SHOW_TEXT, null);
-    let node: Node | null;
-    while ((node = walker.nextNode())) {
-      if (node.nodeValue && node.nodeValue.includes('{{')) {
-        const text = node.nodeValue;
-        INTERPOLATION_RE.lastIndex = 0; // Reset regex
-        let match;
-        let hasMatch = false;
+  static parseNode(node: Node, instance: any, bindings: ViewBinding[]) {
+    // 1. *ngIf
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const el = node as Element;
+      const ngIfExpr = el.getAttribute('*ngIf');
+      if (ngIfExpr) {
+        el.removeAttribute('*ngIf');
+        const anchor = document.createComment(` ngIf: ${ngIfExpr} `);
+        el.parentNode?.insertBefore(anchor, el);
+        el.remove(); // Remove from DOM initially
 
-        while ((match = INTERPOLATION_RE.exec(text)) !== null) {
-          hasMatch = true;
-          bindings.push({
-            node: node,
-            expression: match[1],
-            originalText: text
-          });
-        }
+        const templateClone = el.cloneNode(true) as Element;
+        let attachedElement: Element | null = null;
+        let childBindings: ViewBinding[] = [];
 
-        if (hasMatch) {
-          // Simple replacement for initial render (MVP)
-          let newText = text;
-          bindings.filter(b => b.node === node).forEach(b => {
-            // Replace all occurrences of this expression in the text
-            const regex = new RegExp(`\\{\\{\\s*${b.expression}\\s*\\}\\}`, 'g');
-            const value = instance[b.expression];
-            newText = newText.replace(regex, value !== undefined ? String(value) : '');
-          });
-          node.nodeValue = newText;
-        }
+        bindings.push({
+          update: (inst: any) => {
+            const condition = Boolean(inst[ngIfExpr]);
+            if (condition && !attachedElement) {
+              attachedElement = templateClone.cloneNode(true) as Element;
+              anchor.parentNode?.insertBefore(attachedElement, anchor.nextSibling);
+              childBindings = [];
+              TemplateParser.parseNode(attachedElement, inst, childBindings);
+              childBindings.forEach(b => b.update(inst));
+            } else if (!condition && attachedElement) {
+              attachedElement.remove();
+              attachedElement = null;
+              childBindings = [];
+            } else if (condition && attachedElement) {
+              childBindings.forEach(b => b.update(inst));
+            }
+          }
+        });
+        return; // Skip parsing children, they will be parsed when attached
       }
     }
 
-    // 2. Parse elements for event bindings
-    const elements = fragment.querySelectorAll('*');
-    elements.forEach(element => {
-      const attributes = Array.from(element.attributes);
+    // 2. Attributes: Events & Props
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const el = node as Element;
+      const attributes = Array.from(el.attributes);
       attributes.forEach(attr => {
+        // Events
         const eventMatch = attr.name.match(EVENT_BINDING_RE);
         if (eventMatch) {
           const eventName = eventMatch[1];
           const methodMatch = attr.value.match(METHOD_CALL_RE);
           if (methodMatch) {
             const methodName = methodMatch[1];
-            if (typeof instance[methodName] === 'function') {
-              element.addEventListener(eventName, instance[methodName].bind(instance));
-            } else {
-              console.warn(`Method ${methodName} not found on component instance.`);
-            }
+            el.addEventListener(eventName, () => instance[methodName]());
           }
-          element.removeAttribute(attr.name); // Clean up synthetic attribute
+          el.removeAttribute(attr.name);
+        }
+
+        // Props
+        const propMatch = attr.name.match(PROP_BINDING_RE);
+        if (propMatch) {
+          const propName = propMatch[1];
+          const expr = attr.value;
+          el.removeAttribute(attr.name);
+          bindings.push({
+            update: (inst: any) => {
+              const val = inst[expr];
+              if (typeof val === 'boolean') {
+                if (val) el.setAttribute(propName, '');
+                else el.removeAttribute(propName);
+              } else {
+                (el as any)[propName] = val;
+                el.setAttribute(propName, String(val));
+              }
+            }
+          });
         }
       });
-    });
+    }
 
-    return { fragment, bindings };
+    // 3. Text Interpolation
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.nodeValue || '';
+      if (text.includes('{{')) {
+        const originalText = text;
+        bindings.push({
+          update: (inst: any) => {
+            let newText = originalText;
+            let match;
+            INTERPOLATION_RE.lastIndex = 0;
+            while ((match = INTERPOLATION_RE.exec(originalText)) !== null) {
+              const expr = match[1];
+              const value = inst[expr];
+              newText = newText.replace(`{{ ${expr} }}`, value !== undefined ? String(value) : '');
+              newText = newText.replace(`{{${expr}}}`, value !== undefined ? String(value) : '');
+            }
+            if (node.nodeValue !== newText) {
+              node.nodeValue = newText;
+            }
+          }
+        });
+      }
+    }
+
+    // Recursively parse children
+    const children = Array.from(node.childNodes);
+    children.forEach(child => TemplateParser.parseNode(child, instance, bindings));
   }
 
-  static updateBindings(bindings: InterpolationBinding[], instance: any): void {
-    const nodeMap = new Map<Node, InterpolationBinding[]>();
-    for (const b of bindings) {
-      if (!nodeMap.has(b.node)) nodeMap.set(b.node, []);
-      nodeMap.get(b.node)!.push(b);
-    }
-
-    for (const [node, nodeBindings] of nodeMap.entries()) {
-      let newText = nodeBindings[0].originalText;
-      for (const b of nodeBindings) {
-        const regex = new RegExp(`\\{\\{\\s*${b.expression}\\s*\\}\\}`, 'g');
-        const value = instance[b.expression];
-        newText = newText.replace(regex, value !== undefined ? String(value) : '');
-      }
-      if (node.nodeValue !== newText) {
-        node.nodeValue = newText;
-      }
-    }
+  static updateBindings(bindings: ViewBinding[], instance: any): void {
+    bindings.forEach(b => b.update(instance));
   }
 }

@@ -1,12 +1,12 @@
 import { getComponentConfig } from '../decorators/component';
-import { TemplateParser, InterpolationBinding } from './template-parser';
+import { TemplateParser, ViewBinding } from './template-parser';
 import { createReactiveProxy } from './change-detection';
 import { container } from '../di/container';
 
 export interface ComponentRef {
   instance: any;
   hostElement: HTMLElement;
-  bindings: InterpolationBinding[];
+  bindings: ViewBinding[];
 }
 
 export class Renderer {
@@ -18,7 +18,7 @@ export class Renderer {
 
     const rawInstance = container.resolve(ComponentClass);
 
-    let bindings: InterpolationBinding[] = [];
+    let bindings: ViewBinding[] = [];
 
     const proxyInstance = createReactiveProxy(rawInstance, () => {
       TemplateParser.updateBindings(bindings, proxyInstance);
@@ -29,6 +29,16 @@ export class Renderer {
 
     hostElement.innerHTML = ''; // Clear host
     hostElement.appendChild(parsed.fragment);
+
+    // Initial check for bindings is done in parse, but we do it again just to be safe
+    // Actually no need, parse does it.
+    
+    // Lifecycle: OnInit
+    if ('ngOnInit' in proxyInstance && typeof proxyInstance.ngOnInit === 'function') {
+      queueMicrotask(() => {
+        proxyInstance.ngOnInit();
+      });
+    }
 
     return {
       instance: proxyInstance,
