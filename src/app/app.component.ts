@@ -5,17 +5,21 @@ import { Component } from '@core';
   template: `
     <div style="font-family: sans-serif; padding: 2rem;">
       <h1>{{ title }}</h1>
-      <p>{{ description }}</p>
-      <button (click)="greet()">Say Hello</button>
+      <p>Count: {{ count }}</p>
+      <button (click)="increment()">+1</button>
+      <button (click)="reset()">Reset</button>
     </div>
   `
 })
 export class AppComponent {
-  title = 'MiniNG Framework';
-  description = 'My own Angular MVP!';
+  title = 'MiniNG Framework - Reactivity';
+  count = 0;
 
-  greet() {
-    alert('Hello from MiniNG!');
-    console.log('Button clicked!');
+  increment() {
+    this.count++;
+  }
+
+  reset() {
+    this.count = 0;
   }
 }

@@ -73,4 +73,24 @@ export class TemplateParser {
 
     return { fragment, bindings };
   }
+
+  static updateBindings(bindings: InterpolationBinding[], instance: any): void {
+    const nodeMap = new Map<Node, InterpolationBinding[]>();
+    for (const b of bindings) {
+      if (!nodeMap.has(b.node)) nodeMap.set(b.node, []);
+      nodeMap.get(b.node)!.push(b);
+    }
+
+    for (const [node, nodeBindings] of nodeMap.entries()) {
+      let newText = nodeBindings[0].originalText;
+      for (const b of nodeBindings) {
+        const regex = new RegExp(`\\{\\{\\s*${b.expression}\\s*\\}\\}`, 'g');
+        const value = instance[b.expression];
+        newText = newText.replace(regex, value !== undefined ? String(value) : '');
+      }
+      if (node.nodeValue !== newText) {
+        node.nodeValue = newText;
+      }
+    }
+  }
 }

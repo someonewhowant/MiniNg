@@ -1,5 +1,6 @@
 import { getComponentConfig } from '../decorators/component';
 import { TemplateParser, InterpolationBinding } from './template-parser';
+import { createReactiveProxy } from './change-detection';
 
 export interface ComponentRef {
   instance: any;
@@ -14,15 +15,22 @@ export class Renderer {
       throw new Error(`Class ${ComponentClass.name} is not a valid component.`);
     }
 
-    const instance = new ComponentClass(); // Direct instantiation for Phase 1
+    const rawInstance = new ComponentClass();
 
-    const { fragment, bindings } = TemplateParser.parse(config.template, instance);
+    let bindings: InterpolationBinding[] = [];
+
+    const proxyInstance = createReactiveProxy(rawInstance, () => {
+      TemplateParser.updateBindings(bindings, proxyInstance);
+    });
+
+    const parsed = TemplateParser.parse(config.template, proxyInstance);
+    bindings = parsed.bindings;
 
     hostElement.innerHTML = ''; // Clear host
-    hostElement.appendChild(fragment);
+    hostElement.appendChild(parsed.fragment);
 
     return {
-      instance,
+      instance: proxyInstance,
       hostElement,
       bindings
     };
