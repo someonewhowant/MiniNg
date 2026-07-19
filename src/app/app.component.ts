@@ -1,57 +1,71 @@
 import { Component, OnInit } from '@core';
-import { CounterService } from './services/counter.service';
+import { ProductService, Product } from './services/product.service';
 
 @Component({
   selector: 'app-root',
   template: `
     <div style="font-family: sans-serif; padding: 2rem;">
-      <h1>{{ title }}</h1>
+      <h1>Mini Shop 🛒</h1>
       
-      <div *ngIf="showDetails">
-        <p>Secret details revealed!</p>
-        <p>Count from DI Service: {{ count }}</p>
+      <div class="product-list" style="display: flex; gap: 1rem; margin-bottom: 2rem;">
+        <div class="card" *ngFor="let product of products" style="border: 1px solid #ccc; padding: 1rem; border-radius: 8px;">
+          <h3>{{ product.name }}</h3>
+          <p>{{ product.price }} $</p>
+          <button (click)="addToCart(product)">В корзину</button>
+        </div>
+      </div>
+      
+      <div style="background: #f9f9f9; padding: 1rem; border-radius: 8px;">
+        <h3>Корзина (Товаров: {{ cartCount }})</h3>
+        <ul>
+          <li *ngFor="let item of cart">
+            {{ item.name }} - {{ item.price }} $
+            <button (click)="removeFromCart(item)" style="margin-left: 1rem; color: red;">Удалить</button>
+          </li>
+        </ul>
+        <p *ngIf="isCartEmpty">Корзина пуста</p>
       </div>
 
-      <div style="margin: 1rem 0;">
-        <input (input)="onInput($event)" placeholder="Type something..." />
-        <p>You typed: {{ typedText }}</p>
+      <div style="margin-top: 2rem; border-top: 1px solid #eee; padding-top: 1rem;">
+        <h3>Тест ввода ($event)</h3>
+        <input (input)="onInput($event)" placeholder="Search..." />
+        <p>Ищем: {{ searchQuery }}</p>
       </div>
-
-      <button (click)="increment()" [disabled]="isLocked">+1</button>
-      <button (click)="toggleDetails()">Toggle Details</button>
-      <button (click)="toggleLock()">Toggle Lock</button>
     </div>
   `
 })
 export class AppComponent implements OnInit {
-  title = '';
-  count = 0;
-  showDetails = true;
-  isLocked = false;
-  typedText = '';
+  products: Product[] = [];
+  cart: Product[] = [];
+  cartCount = 0;
+  searchQuery = '';
 
-  constructor(private counterService: CounterService) {
-    this.count = this.counterService.getValue();
+  get isCartEmpty() {
+    return this.cartCount === 0;
   }
 
+  constructor(private productService: ProductService) {}
+
   ngOnInit() {
-    this.title = 'Loaded via OnInit!';
+    this.products = this.productService.getAll();
+  }
+
+  addToCart(product: Product) {
+    this.cart.push(product); // Это должно вызвать перерисовку списка корзины (Proxy push)
+    this.cartCount = this.cart.length;
+  }
+
+  removeFromCart(product: Product) {
+    const index = this.cart.indexOf(product);
+    if (index !== -1) {
+      this.cart.splice(index, 1); // Мутация сплайсом
+      this.cartCount = this.cart.length;
+    }
   }
 
   onInput(event: Event) {
     const input = event.target as HTMLInputElement;
-    this.typedText = input.value;
-  }
-
-  increment() {
-    this.count = this.counterService.increment();
-  }
-
-  toggleDetails() {
-    this.showDetails = !this.showDetails;
-  }
-
-  toggleLock() {
-    this.isLocked = !this.isLocked;
+    this.searchQuery = input.value;
   }
 }
+

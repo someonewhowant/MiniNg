@@ -9,7 +9,9 @@
     "preview": "vite preview"
   },
   "devDependencies": {
+    "@swc/core": "^1.15.43",
     "typescript": "^5.2.2",
+    "unplugin-swc": "^1.5.9",
     "vite": "^5.2.0"
   },
   "dependencies": {
