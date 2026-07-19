@@ -7,6 +7,7 @@ export interface ComponentRef {
   instance: any;
   hostElement: HTMLElement;
   bindings: ViewBinding[];
+  destroy: () => void;
 }
 
 export class Renderer {
@@ -24,26 +25,39 @@ export class Renderer {
       TemplateParser.updateBindings(bindings, proxyInstance);
     });
 
-    const parsed = TemplateParser.parse(config.template, proxyInstance);
+    const parsed = TemplateParser.parse(
+      config.template, 
+      proxyInstance,
+      config.declarations || [],
+      (ChildClass, hostEl) => Renderer.render(ChildClass as any, hostEl as HTMLElement)
+    );
     bindings = parsed.bindings;
 
     hostElement.innerHTML = ''; // Clear host
     hostElement.appendChild(parsed.fragment);
 
-    // Initial check for bindings is done in parse, but we do it again just to be safe
-    // Actually no need, parse does it.
-    
-    // Lifecycle: OnInit
-    if ('ngOnInit' in proxyInstance && typeof proxyInstance.ngOnInit === 'function') {
-      queueMicrotask(() => {
+    // Lifecycle: OnInit & AfterViewInit
+    queueMicrotask(() => {
+      if ('ngOnInit' in proxyInstance && typeof proxyInstance.ngOnInit === 'function') {
         proxyInstance.ngOnInit();
-      });
-    }
+      }
+      if ('ngAfterViewInit' in proxyInstance && typeof proxyInstance.ngAfterViewInit === 'function') {
+        proxyInstance.ngAfterViewInit();
+      }
+    });
 
     return {
       instance: proxyInstance,
       hostElement,
-      bindings
+      bindings,
+      destroy: () => {
+        bindings.forEach(b => {
+          if (b.destroy) b.destroy();
+        });
+        if ('ngOnDestroy' in proxyInstance && typeof proxyInstance.ngOnDestroy === 'function') {
+          proxyInstance.ngOnDestroy();
+        }
+      }
     };
   }
 }

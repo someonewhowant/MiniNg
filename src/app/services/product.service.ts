@@ -1,9 +1,9 @@
 import { Injectable } from '@core';
 
-export interface Product {
-  id: number;
-  name: string;
-  price: number;
+export class Product {
+  id!: number;
+  name!: string;
+  price!: number;
 }
 
 @Injectable()

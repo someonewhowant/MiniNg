@@ -1,18 +1,22 @@
 import { Component, OnInit } from '@core';
-import { ProductService, Product } from './services/product.service';
+import { ProductService } from './services/product.service';
+import type { Product } from './services/product.service';
+import { ProductCardComponent } from './components/product-card.component';
 
 @Component({
   selector: 'app-root',
+  declarations: [ProductCardComponent],
   template: `
     <div style="font-family: sans-serif; padding: 2rem;">
       <h1>Mini Shop 🛒</h1>
       
+      <div style="margin-bottom: 1rem;">
+         <button (click)="applyDiscount()">Сделать скидку (OnChanges)</button>
+         <button (click)="removeFirstProduct()">Удалить первый товар (OnDestroy)</button>
+      </div>
+
       <div class="product-list" style="display: flex; gap: 1rem; margin-bottom: 2rem;">
-        <div class="card" *ngFor="let product of products" style="border: 1px solid #ccc; padding: 1rem; border-radius: 8px;">
-          <h3>{{ product.name }}</h3>
-          <p>{{ product.price }} $</p>
-          <button (click)="addToCart(product)">В корзину</button>
-        </div>
+        <product-card *ngFor="let product of products" [product]="product" (addToCart)="addToCart($event)"></product-card>
       </div>
       
       <div style="background: #f9f9f9; padding: 1rem; border-radius: 8px;">
@@ -27,8 +31,8 @@ import { ProductService, Product } from './services/product.service';
       </div>
 
       <div style="margin-top: 2rem; border-top: 1px solid #eee; padding-top: 1rem;">
-        <h3>Тест ввода ($event)</h3>
-        <input (input)="onInput($event)" placeholder="Search..." />
+        <h3>Тест двустороннего связывания [(ngModel)]</h3>
+        <input [(ngModel)]="searchQuery" placeholder="Search..." />
         <p>Ищем: {{ searchQuery }}</p>
       </div>
     </div>
@@ -40,7 +44,7 @@ export class AppComponent implements OnInit {
   cartCount = 0;
   searchQuery = '';
 
-  get isCartEmpty() {
+  get isCartEmpty()  {
     return this.cartCount === 0;
   }
 
@@ -48,6 +52,20 @@ export class AppComponent implements OnInit {
 
   ngOnInit() {
     this.products = this.productService.getAll();
+  }
+
+  applyDiscount() {
+    if (this.products.length > 0) {
+      // Reassign to trigger OnChanges (object reference change)
+      this.products[0] = { ...this.products[0], price: 9.99 };
+    }
+  }
+
+  removeFirstProduct() {
+    if (this.products.length > 0) {
+      // Trigger Array Proxy splice -> DOM cleanup -> OnDestroy
+      this.products.splice(0, 1);
+    }
   }
 
   addToCart(product: Product) {
@@ -61,11 +79,6 @@ export class AppComponent implements OnInit {
       this.cart.splice(index, 1); // Мутация сплайсом
       this.cartCount = this.cart.length;
     }
-  }
-
-  onInput(event: Event) {
-    const input = event.target as HTMLInputElement;
-    this.searchQuery = input.value;
   }
 }
 
