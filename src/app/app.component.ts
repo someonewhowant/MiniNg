@@ -2,10 +2,11 @@ import { Component, OnInit } from '@core';
 import { ProductService } from './services/product.service';
 import type { Product } from './services/product.service';
 import { ProductCardComponent } from './components/product-card.component';
+import { CurrencyPipe } from './pipes/currency.pipe';
 
 @Component({
   selector: 'app-root',
-  declarations: [ProductCardComponent],
+  declarations: [ProductCardComponent, CurrencyPipe],
   template: `
     <div style="font-family: sans-serif; padding: 2rem;">
       <h1>Mini Shop 🛒</h1>
@@ -23,7 +24,7 @@ import { ProductCardComponent } from './components/product-card.component';
         <h3>Корзина (Товаров: {{ cartCount }})</h3>
         <ul>
           <li *ngFor="let item of cart">
-            {{ item.name }} - {{ item.price }} $
+            {{ item.name }} - <strong style="color: green;">{{ item.price | currency:'USD' }}</strong>
             <button (click)="removeFromCart(item)" style="margin-left: 1rem; color: red;">Удалить</button>
           </li>
         </ul>
@@ -35,6 +36,19 @@ import { ProductCardComponent } from './components/product-card.component';
         <input [(ngModel)]="searchQuery" placeholder="Search..." />
         <p>Ищем: {{ searchQuery }}</p>
       </div>
+
+      <div style="margin-top: 2rem; padding: 1rem; border: 1px solid #ddd; border-radius: 8px;">
+        <h3>Тест *ngSwitch (Статус заказа)</h3>
+        <button (click)="nextStatus()">Следующий статус</button>
+        <p>Текущий статус: <strong>{{ orderStatus }}</strong></p>
+        
+        <div [ngSwitch]="orderStatus" style="padding: 1rem; background: #f0f8ff; border-radius: 4px; margin-top: 1rem;">
+          <p *ngSwitchCase="'pending'">⏳ Заказ обрабатывается. Ожидайте...</p>
+          <p *ngSwitchCase="'shipped'">🚚 Заказ отправлен! Отслеживание: 12345</p>
+          <p *ngSwitchCase="'delivered'">✅ Заказ успешно доставлен!</p>
+          <p *ngSwitchDefault>❓ Неизвестный статус заказа</p>
+        </div>
+      </div>
     </div>
   `
 })
@@ -43,6 +57,14 @@ export class AppComponent implements OnInit {
   cart: Product[] = [];
   cartCount = 0;
   searchQuery = '';
+  orderStatus = 'pending';
+
+  nextStatus() {
+    if (this.orderStatus === 'pending') this.orderStatus = 'shipped';
+    else if (this.orderStatus === 'shipped') this.orderStatus = 'delivered';
+    else if (this.orderStatus === 'delivered') this.orderStatus = 'unknown';
+    else this.orderStatus = 'pending';
+  }
 
   get isCartEmpty()  {
     return this.cartCount === 0;

@@ -1,4 +1,6 @@
 import { getComponentConfig } from '../decorators/component';
+import { getPipeConfig } from '../decorators/pipe';
+import { container } from '../di/container';
 
 export interface ViewBinding {
   update(instance: any): void;
@@ -9,8 +11,76 @@ const INTERPOLATION_RE = /\{\{\s*([\w.]+)\s*\}\}/g;
 const EVENT_BINDING_RE = /^\((\w+)\)$/;
 const PROP_BINDING_RE = /^\[(\w+)\]$/;
 
-function resolveValue(context: any, expr: string): any {
-  return expr.split('.').reduce((acc, part) => acc && acc[part], context);
+function resolveValue(context: any, expr: string, declarations: Function[] = []): any {
+  let cleanExpr = expr.trim();
+
+  // Handle Pipes
+  if (cleanExpr.includes('|')) {
+    const parts = cleanExpr.split('|');
+    let value = resolveValue(context, parts[0].trim(), declarations);
+    
+    for (let i = 1; i < parts.length; i++) {
+      const pipeExpr = parts[i].trim();
+      const [pipeName, ...argsStr] = pipeExpr.split(':');
+      
+      const PipeClass = declarations.find(d => {
+         const config = getPipeConfig(d);
+         return config && config.name === pipeName;
+      });
+
+      if (PipeClass) {
+        const pipeInstance = container.resolve(PipeClass as any) as any;
+        const args = argsStr.map(a => resolveValue(context, a.trim(), declarations));
+        value = pipeInstance.transform(value, ...args);
+      } else {
+        console.warn(`Pipe '${pipeName}' not found in declarations.`);
+      }
+    }
+    return value;
+  }
+
+  let isNegated = false;
+  if (cleanExpr.startsWith('!')) {
+    isNegated = true;
+    cleanExpr = cleanExpr.substring(1).trim();
+  }
+
+  // Handle method calls with no args
+  const methodMatch = cleanExpr.match(/^(\w+)\(\)$/);
+  if (methodMatch) {
+    const methodName = methodMatch[1];
+    if (typeof context[methodName] === 'function') {
+      const val = context[methodName]();
+      return isNegated ? !val : val;
+    }
+  }
+
+  // Handle literals
+  if (cleanExpr === 'true') return !isNegated ? true : false;
+  if (cleanExpr === 'false') return !isNegated ? false : true;
+  if (!isNaN(Number(cleanExpr))) return !isNegated ? Number(cleanExpr) : false;
+  if (cleanExpr.startsWith("'") && cleanExpr.endsWith("'")) return !isNegated ? cleanExpr.slice(1, -1) : false;
+  if (cleanExpr.startsWith('"') && cleanExpr.endsWith('"')) return !isNegated ? cleanExpr.slice(1, -1) : false;
+
+  const val = cleanExpr.split('.').reduce((acc, part) => acc && acc[part], context);
+  return isNegated ? !val : val;
+}
+
+function parseObjectLiteral(expr: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  const cleanExpr = expr.trim().replace(/^\{|\}$/g, '');
+  if (!cleanExpr) return result;
+  
+  const pairs = cleanExpr.split(',');
+  for (const pair of pairs) {
+    const [keyPart, ...valParts] = pair.split(':');
+    if (keyPart && valParts.length > 0) {
+      let key = keyPart.trim();
+      key = key.replace(/^['"]|['"]$/g, '');
+      result[key] = valParts.join(':').trim();
+    }
+  }
+  return result;
 }
 
 function setValue(context: any, expr: string, value: any): void {
@@ -27,7 +97,7 @@ export class TemplateParser {
     template: string, 
     instance: any,
     declarations: Function[] = [],
-    renderChild?: (ComponentClass: Function, hostElement: HTMLElement) => any
+    renderChild?: (ComponentClass: Function, hostElement: HTMLElement, initialInputs?: Record<string, any>) => any
   ): { fragment: DocumentFragment; bindings: ViewBinding[] } {
     const templateElement = document.createElement('template');
     templateElement.innerHTML = template.trim();
@@ -47,7 +117,8 @@ export class TemplateParser {
     instance: any, 
     bindings: ViewBinding[],
     declarations: Function[] = [],
-    renderChild?: (ComponentClass: Function, hostElement: HTMLElement) => any
+    renderChild?: (ComponentClass: Function, hostElement: HTMLElement, initialInputs?: Record<string, any>) => any,
+    switchContext?: { expr: string; matched: boolean; pendingDefaultUpdate?: boolean }
   ) {
     if (node.nodeType === Node.ELEMENT_NODE) {
       const el = node as Element;
@@ -66,7 +137,7 @@ export class TemplateParser {
 
         bindings.push({
           update: (inst: any) => {
-            const condition = Boolean(resolveValue(inst, ngIfExpr));
+            const condition = Boolean(resolveValue(inst, ngIfExpr, declarations));
             if (condition && !attachedElement) {
               attachedElement = templateClone.cloneNode(true) as Element;
               anchor.parentNode?.insertBefore(attachedElement, anchor.nextSibling);
@@ -89,6 +160,96 @@ export class TemplateParser {
         return; // Skip parsing children, they will be parsed when attached
       }
 
+      // 1.2 *ngSwitchCase
+      const ngSwitchCaseExpr = el.getAttribute('*ngSwitchCase');
+      if (ngSwitchCaseExpr !== null) {
+        el.removeAttribute('*ngSwitchCase');
+        const anchor = document.createComment(` ngSwitchCase: ${ngSwitchCaseExpr} `);
+        el.parentNode?.insertBefore(anchor, el);
+        el.remove();
+
+        const templateClone = el.cloneNode(true) as Element;
+        let attachedElement: Element | null = null;
+        let childBindings: ViewBinding[] = [];
+
+        bindings.push({
+          update: (inst: any) => {
+            if (!switchContext) throw new Error('*ngSwitchCase must be inside [ngSwitch]');
+            const switchVal = resolveValue(inst, switchContext.expr, declarations);
+            const caseVal = resolveValue(inst, ngSwitchCaseExpr, declarations);
+            const condition = switchVal === caseVal;
+            
+            if (condition) {
+              switchContext.matched = true;
+            }
+
+            if (condition && !attachedElement) {
+              attachedElement = templateClone.cloneNode(true) as Element;
+              anchor.parentNode?.insertBefore(attachedElement, anchor.nextSibling);
+              childBindings = [];
+              TemplateParser.parseNode(attachedElement, inst, childBindings, declarations, renderChild, switchContext);
+              childBindings.forEach(b => b.update(inst));
+            } else if (!condition && attachedElement) {
+              childBindings.forEach(b => { if (b.destroy) b.destroy(); });
+              attachedElement.remove();
+              attachedElement = null;
+              childBindings = [];
+            } else if (condition && attachedElement) {
+              childBindings.forEach(b => b.update(inst));
+            }
+          },
+          destroy: () => {
+             childBindings.forEach(b => { if (b.destroy) b.destroy(); });
+          }
+        });
+        return; 
+      }
+
+      // 1.3 *ngSwitchDefault
+      const hasSwitchDefault = el.hasAttribute('*ngSwitchDefault');
+      if (hasSwitchDefault) {
+        el.removeAttribute('*ngSwitchDefault');
+        const anchor = document.createComment(` ngSwitchDefault `);
+        el.parentNode?.insertBefore(anchor, el);
+        el.remove();
+
+        const templateClone = el.cloneNode(true) as Element;
+        let attachedElement: Element | null = null;
+        let childBindings: ViewBinding[] = [];
+
+        bindings.push({
+          update: (inst: any) => {
+            if (!switchContext) throw new Error('*ngSwitchDefault must be inside [ngSwitch]');
+            if (switchContext.pendingDefaultUpdate) return;
+            switchContext.pendingDefaultUpdate = true;
+            
+            queueMicrotask(() => {
+              switchContext.pendingDefaultUpdate = false;
+              const condition = !switchContext.matched;
+              
+              if (condition && !attachedElement) {
+                attachedElement = templateClone.cloneNode(true) as Element;
+                anchor.parentNode?.insertBefore(attachedElement, anchor.nextSibling);
+                childBindings = [];
+                TemplateParser.parseNode(attachedElement, inst, childBindings, declarations, renderChild, switchContext);
+                childBindings.forEach(b => b.update(inst));
+              } else if (!condition && attachedElement) {
+                childBindings.forEach(b => { if (b.destroy) b.destroy(); });
+                attachedElement.remove();
+                attachedElement = null;
+                childBindings = [];
+              } else if (condition && attachedElement) {
+                childBindings.forEach(b => b.update(inst));
+              }
+            });
+          },
+          destroy: () => {
+             childBindings.forEach(b => { if (b.destroy) b.destroy(); });
+          }
+        });
+        return;
+      }
+
       // 1.5 *ngFor
       const ngForExpr = el.getAttribute('*ngFor');
       if (ngForExpr) {
@@ -108,7 +269,7 @@ export class TemplateParser {
 
         bindings.push({
           update: (inst: any) => {
-            const array = resolveValue(inst, arrayProp);
+            const array = resolveValue(inst, arrayProp, declarations);
             if (!Array.isArray(array)) return;
 
             // Clear old nodes
@@ -182,7 +343,13 @@ export class TemplateParser {
            }
         });
 
-        const childRef = renderChild(ChildComponentClass, el as HTMLElement);
+        // Evaluate initial inputs to pass to renderChild before template parsing
+        const initialInputs: Record<string, any> = {};
+        inputBindings.forEach(({ propName, expr }) => {
+           initialInputs[propName] = resolveValue(instance, expr, declarations);
+        });
+
+        const childRef = renderChild(ChildComponentClass, el as HTMLElement, initialInputs);
         const childInstance = childRef.instance;
 
         let firstChange = true;
@@ -195,7 +362,7 @@ export class TemplateParser {
               const changes: any = {};
 
               inputBindings.forEach(({ propName, expr }) => {
-                 const currentVal = resolveValue(inst, expr);
+                 const currentVal = resolveValue(inst, expr, declarations);
                  const prevVal = previousInputs[propName];
 
                  if (currentVal !== prevVal || firstChange) {
@@ -230,7 +397,7 @@ export class TemplateParser {
                  if (argsStr === '$event') {
                     instance[methodName](eventArg);
                  } else if (argsStr) {
-                    const argVal = resolveValue(instance, argsStr);
+                    const argVal = resolveValue(instance, argsStr, declarations);
                     instance[methodName](argVal);
                  } else {
                     instance[methodName]();
@@ -248,6 +415,62 @@ export class TemplateParser {
       const el = node as Element;
       const attributes = Array.from(el.attributes);
       attributes.forEach(attr => {
+        // [ngClass]
+        if (attr.name === '[ngClass]') {
+          const expr = attr.value;
+          el.removeAttribute(attr.name);
+          bindings.push({
+            update: (inst: any) => {
+              let classObj: any = {};
+              if (expr.trim().startsWith('{')) {
+                const parsed = parseObjectLiteral(expr);
+                for (const [key, valExpr] of Object.entries(parsed)) {
+                  classObj[key] = resolveValue(inst, valExpr, declarations);
+                }
+              } else {
+                classObj = resolveValue(inst, expr, declarations);
+              }
+              
+              if (classObj && typeof classObj === 'object') {
+                for (const [className, condition] of Object.entries(classObj)) {
+                  if (condition) {
+                    el.classList.add(className);
+                  } else {
+                    el.classList.remove(className);
+                  }
+                }
+              }
+            }
+          });
+          return;
+        }
+
+        // [ngStyle]
+        if (attr.name === '[ngStyle]') {
+          const expr = attr.value;
+          el.removeAttribute(attr.name);
+          bindings.push({
+            update: (inst: any) => {
+              let styleObj: any = {};
+              if (expr.trim().startsWith('{')) {
+                const parsed = parseObjectLiteral(expr);
+                for (const [key, valExpr] of Object.entries(parsed)) {
+                  styleObj[key] = resolveValue(inst, valExpr, declarations);
+                }
+              } else {
+                styleObj = resolveValue(inst, expr, declarations);
+              }
+              
+              if (styleObj && typeof styleObj === 'object') {
+                for (const [styleName, styleValue] of Object.entries(styleObj)) {
+                  (el as HTMLElement).style[styleName as any] = styleValue as string;
+                }
+              }
+            }
+          });
+          return;
+        }
+
         // [(ngModel)]
         if (attr.name === '[(ngModel)]') {
           const propName = attr.value;
@@ -257,7 +480,7 @@ export class TemplateParser {
           // Component -> DOM
           bindings.push({
             update: (inst: any) => {
-              const val = resolveValue(inst, propName);
+              const val = resolveValue(inst, propName, declarations);
               if (inputEl.type === 'checkbox') {
                 inputEl.checked = Boolean(val);
               } else {
@@ -288,7 +511,7 @@ export class TemplateParser {
               if (argsStr === '$event') {
                 instance[methodName](event);
               } else if (argsStr) {
-                const argVal = resolveValue(instance, argsStr);
+                const argVal = resolveValue(instance, argsStr, declarations);
                 instance[methodName](argVal);
               } else {
                 instance[methodName]();
@@ -306,7 +529,7 @@ export class TemplateParser {
           el.removeAttribute(attr.name);
           bindings.push({
             update: (inst: any) => {
-              const val = resolveValue(inst, expr);
+              const val = resolveValue(inst, expr, declarations);
               if (typeof val === 'boolean') {
                 if (val) el.setAttribute(propName, '');
                 else el.removeAttribute(propName);
@@ -332,7 +555,7 @@ export class TemplateParser {
             INTERPOLATION_RE.lastIndex = 0;
             while ((match = INTERPOLATION_RE.exec(originalText)) !== null) {
               const expr = match[1];
-              const value = resolveValue(inst, expr);
+              const value = resolveValue(inst, expr, declarations);
               newText = newText.replace(`{{ ${expr} }}`, value !== undefined ? String(value) : '');
               newText = newText.replace(`{{${expr}}}`, value !== undefined ? String(value) : '');
             }
@@ -345,8 +568,21 @@ export class TemplateParser {
     }
 
     // Recursively parse children
+    let currentSwitchCtx = switchContext;
+    if (node.nodeType === Node.ELEMENT_NODE) {
+       const el = node as Element;
+       if (el.hasAttribute('[ngSwitch]')) {
+          const expr = el.getAttribute('[ngSwitch]')!;
+          el.removeAttribute('[ngSwitch]');
+          currentSwitchCtx = { expr, matched: false };
+          bindings.push({
+             update: () => { currentSwitchCtx!.matched = false; }
+          });
+       }
+    }
+
     const children = Array.from(node.childNodes);
-    children.forEach(child => TemplateParser.parseNode(child, instance, bindings, declarations, renderChild));
+    children.forEach(child => TemplateParser.parseNode(child, instance, bindings, declarations, renderChild, currentSwitchCtx));
   }
 
   static updateBindings(bindings: ViewBinding[], instance: any): void {

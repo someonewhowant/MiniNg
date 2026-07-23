@@ -11,7 +11,11 @@ export interface ComponentRef {
 }
 
 export class Renderer {
-  static render(ComponentClass: new (...args: any[]) => any, hostElement: HTMLElement): ComponentRef {
+  static render(
+    ComponentClass: new (...args: any[]) => any, 
+    hostElement: HTMLElement,
+    initialInputs?: Record<string, any>
+  ): ComponentRef {
     const config = getComponentConfig(ComponentClass);
     if (!config) {
       throw new Error(`Class ${ComponentClass.name} is not a valid component.`);
@@ -25,11 +29,15 @@ export class Renderer {
       TemplateParser.updateBindings(bindings, proxyInstance);
     });
 
+    if (initialInputs) {
+      Object.assign(proxyInstance, initialInputs);
+    }
+
     const parsed = TemplateParser.parse(
       config.template, 
       proxyInstance,
       config.declarations || [],
-      (ChildClass, hostEl) => Renderer.render(ChildClass as any, hostEl as HTMLElement)
+      (ChildClass, hostEl, initInputs) => Renderer.render(ChildClass as any, hostEl as HTMLElement, initInputs)
     );
     bindings = parsed.bindings;
 
