@@ -6,3 +6,4 @@ export * from './di/container';
 export * from './bootstrap';
 export * from './lifecycle/hooks';
 export * from './event-emitter';
+export * from './router/router';

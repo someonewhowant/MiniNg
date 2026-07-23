@@ -1,6 +1,7 @@
 import { getComponentConfig } from '../decorators/component';
 import { getPipeConfig } from '../decorators/pipe';
 import { container } from '../di/container';
+import { Router } from '../router/router';
 
 export interface ViewBinding {
   update(instance: any): void;
@@ -123,7 +124,14 @@ export class TemplateParser {
     if (node.nodeType === Node.ELEMENT_NODE) {
       const el = node as Element;
       
-      // 1. *ngIf
+      // 1.0 Router Outlet
+      if (el.tagName.toLowerCase() === 'router-outlet') {
+        const router = container.resolve(Router);
+        router.setOutlet(el as HTMLElement);
+        // do not return, allow it to process attributes if any, though usually empty
+      }
+
+      // 1.1 *ngIf
       const ngIfExpr = el.getAttribute('*ngIf');
       if (ngIfExpr) {
         el.removeAttribute('*ngIf');
@@ -322,19 +330,25 @@ export class TemplateParser {
         const inputBindings: { propName: string; expr: string }[] = [];
         const outputBindings: { eventName: string; methodName: string; argsStr: string }[] = [];
 
+        // Fetch registered inputs/outputs to handle case-insensitivity of HTML attributes
+        const registeredInputs: string[] = Reflect.getMetadata('input:props', ChildComponentClass) || [];
+        const registeredOutputs: string[] = Reflect.getMetadata('output:events', ChildComponentClass) || [];
+
         attributes.forEach(attr => {
            const propMatch = attr.name.match(/^\[(\w+)\]$/);
            if (propMatch) {
-              inputBindings.push({ propName: propMatch[1], expr: attr.value });
+              const matchedProp = registeredInputs.find(i => i.toLowerCase() === propMatch[1]) || propMatch[1];
+              inputBindings.push({ propName: matchedProp, expr: attr.value });
               el.removeAttribute(attr.name);
            }
            
            const eventMatch = attr.name.match(/^\((\w+)\)$/);
            if (eventMatch) {
+              const matchedEvent = registeredOutputs.find(o => o.toLowerCase() === eventMatch[1]) || eventMatch[1];
               const methodMatch = attr.value.match(/^(\w+)\((.*?)\)$/);
               if (methodMatch) {
                  outputBindings.push({ 
-                    eventName: eventMatch[1], 
+                    eventName: matchedEvent, 
                     methodName: methodMatch[1], 
                     argsStr: methodMatch[2].trim() 
                  });
@@ -415,8 +429,31 @@ export class TemplateParser {
       const el = node as Element;
       const attributes = Array.from(el.attributes);
       attributes.forEach(attr => {
+        // [routerLink]
+        if (attr.name === '[routerlink]') {
+          const expr = attr.value;
+          el.removeAttribute(attr.name);
+          const router = container.resolve(Router);
+          
+          bindings.push({
+            update: (inst: any) => {
+              const path = resolveValue(inst, expr, declarations);
+              if (el.tagName.toLowerCase() === 'a') {
+                el.setAttribute('href', `#${path}`);
+              }
+            }
+          });
+          
+          el.addEventListener('click', (event: Event) => {
+            event.preventDefault();
+            const path = resolveValue(instance, expr, declarations);
+            router.navigate(path);
+          });
+          return;
+        }
+
         // [ngClass]
-        if (attr.name === '[ngClass]') {
+        if (attr.name === '[ngclass]') {
           const expr = attr.value;
           el.removeAttribute(attr.name);
           bindings.push({
@@ -446,7 +483,7 @@ export class TemplateParser {
         }
 
         // [ngStyle]
-        if (attr.name === '[ngStyle]') {
+        if (attr.name === '[ngstyle]') {
           const expr = attr.value;
           el.removeAttribute(attr.name);
           bindings.push({
@@ -472,7 +509,7 @@ export class TemplateParser {
         }
 
         // [(ngModel)]
-        if (attr.name === '[(ngModel)]') {
+        if (attr.name === '[(ngmodel)]') {
           const propName = attr.value;
           el.removeAttribute(attr.name);
           const inputEl = el as HTMLInputElement;
